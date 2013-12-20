@@ -237,14 +237,22 @@ table {
   text-align: left;
  }
 
+th:first-child {
+  border-right: 1px solid #f2f2f2;
+}
+th:last-child {
+  border-left: 1px solid #f2f2f2;
+}
 th {
   font-family: 'Lucida Grande', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 90%;
   padding: 10px;
   background: #373737;
   color: #fff;
  }
 
 td {
+  font-size: 90%;
   padding: 10px;
   border: 1px solid #373737;
  }

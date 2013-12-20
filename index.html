@@ -1,13 +1,10 @@
 <!DOCTYPE html>
 <html>
-
   <head>
     <meta charset='utf-8' />
     <meta http-equiv="X-UA-Compatible" content="chrome=1" />
     <meta name="description" content="801 : JavaScript emulator &amp; assembler for the 801 instruction set" />
-
     <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
-
     <title>801</title>
   </head>
 
@@ -17,10 +14,8 @@
     <div id="header_wrap" class="outer">
         <header class="inner">
           <a id="forkme_banner" href="https://github.com/OhMeadhbh/801">View on GitHub</a>
-
           <h1 id="project_title">801</h1>
           <h2 id="project_tagline">JavaScript emulator &amp; assembler for the 801 instruction set</h2>
-
             <section id="downloads">
               <a class="zip_download_link" href="https://github.com/OhMeadhbh/801/zipball/master">Download this project as a .zip file</a>
               <a class="tar_download_link" href="https://github.com/OhMeadhbh/801/tarball/master">Download this project as a tar.gz file</a>
@@ -31,37 +26,759 @@
     <!-- MAIN CONTENT -->
     <div id="main_content_wrap" class="outer">
       <section id="main_content" class="inner">
-        <h3>
-<a name="welcome-to-github-pages" class="anchor" href="#welcome-to-github-pages"><span class="octicon octicon-link"></span></a>Welcome to GitHub Pages.</h3>
+        <p>
+          <strong>801</strong> is the name of an instruction set for a series of experimental
+          16-bit microcontrollers. Development of a stable 801 core (called the 801A1S)
+          is ongoing. This project documents the 801 instruction set and provides a simple
+          web-based 801A1 emulator and assembler.
+        </p>
 
-<p>This automatic page generator is the easiest way to create beautiful pages for all of your projects. Author your page content here using GitHub Flavored Markdown, select a template crafted by a designer, and publish. After your page is generated, you can check out the new branch:</p>
+        <p>
+          The <strong>801A</strong> family of Microcontrollers implement the 801 instruction
+          set and is a load/store RISC-like von Neumann device with support for fast context
+          switching, jitter-free interrupts and hardware redundancy. Features that may seem
+          unique or anachronistic include:
 
-<pre><code>$ cd your_repo_root/repo_name
-$ git fetch origin
-$ git checkout gh-pages
-</code></pre>
+          <ul>
+            <li><strong>16-bit words</strong> - Unlike most modern processors, the 801A does
+              not support byte-addressing. This eliminates questions of endianness and the
+              need to worry about alignment in memory.</li>
+            <li><strong>Workspace Pointer</strong> - The 801A has three core registers: the PC,
+              CR (status) and the WP. The WP register points to a location in memory where
+              general purpose registers are stored. To service an interrupt (or context switch)
+              we simply reload the WP to point to the register file for the ISR.</li>
+            <li><strong>No Addressing Modes</strong> - In an effort to simplify the core CPU, the
+              801 architecture uses strict load/store semantics. There are no "index" registers.
+              To access an offset into a table, you add the offset into the base address, then use
+              the LOAD and STOR instructions to access that memory address.</li>
+            <li><strong>Memory-Mapped I/O</strong> - Memory mapped peripherals live in the top of
+              the memory map under the ISR vector table.</li>
+          </ul>
+        </p>
 
-<p>If you're using the GitHub for Mac, simply sync your repository and you'll see the new branch.</p>
+        <h3><a name="overview" class="anchor" href="#overview"><span class="octicon octicon-link"></span></a>801A Architectural Overview</h3>
+        <p>
+          The 801A is a 16-bit load/store von-neumann architecture micro-controller with 64 kilo-words (1 mega-bit) of
+          on-chip static ram. At power-up a memory is loaded with a boot image from a serial Flash/EEPROM device. With
+          the exception of absolute branch and operations on "immediate" values, all instructions are one word (16 bits)
+          long. With few exceptions, registers are orthogonal to instructions, meaning all instructions can operate on
+          all registers. The exceptions are extended instructions and instructions implementing the Branch and Load
+          Workspace Pointer (BLWP) and Return via Workspace Pointer (RTWP) instructions (described below.)
+        </p>
+        <p>
+          The three "core" registers include the Program Counter (PC), Condition code Register (CR) and the Workspace
+          Pointer Register. The PC and CR behave in a manner which is typical for a micro-controller: the PC contains
+          the address of the next instruction to be executed while the Condition code Register contains flags indicating
+          the results of previous instructions.
+        </p>
+        <p>
+          The 801A supports 16 interrupts tied to hardware events or software events. Each interrupt may triggered by
+          the INTR instruction (described below.) The Power-on Reset (PoR) and Non Maskable Interrupt (NMI) share a
+          interrupt vector 0 as it is assumed the NMI signal will be used to signal a "warm boot." Hardware interrupts
+          may be prioritized by setting the Interrupt Priority bits in the Condition Code Register. Only interrupts whose
+          vector number is less than or equal to the current interrupt priority will be honored.
+        </p>
+        <p>
+          Interrupt vector 14 is called when an "exceptional event" such as an invalid opcode or divide by zero occurs.
+        </p>
+        <p>
+          Interrupt vector 15 support "eXtended OPerations" (XOPs.) XOPs are instructions that are intended to be emulated
+          by software. When the instruction unit detects an XOP, it changes context to the XOP ISR. The ISR performs some
+          action and then returns.
+        </p>
+        <p>
+          The 801A1 uses Interrupt Vector 1 for the three on-chip timers, interrupt vector 2 for the hardware serial
+          controller and interrupt vector 3 for GPIO. This leaves 11 interrupt vectors available for use by software.
+        </p>
+        <p>
+          There are only two "reserved" sections in the memory map: the Interrupt Service Routine Vector Table and the
+          Memory Mapped I/O segment. The Interrupt Service Routine Vector Table (ISRVT) is 32 words long and contains
+          the PC and WP values for each of the 16 interrupt service routines. Addresses 0xFF00 through 0xFFDF are reserved
+          for memory mapped I/O.
+        </p>
+        <p>
+          The Condition Code Register contains the following bits (and bit fields):
+          <ul>
+            <li><strong>Bit 0</strong> Zero - This bit is set if the result of an arithmetic or logical instruction
+              results in a zero.</li>
+            <li><strong>Bit 1</strong> Carry - This bit is set if the result of an arithmetic instruction causes an unsigned
+              overflow.</li>
+            <li><strong>Bit 2</strong> Sign - This bit is set if the result of an arithmetic instruction causes the most
+              significant bit to be set.</li>            
+            <li><strong>Bit 3</strong> Overflow - This bit is set if the result of an arithmetic instruction cannot be
+              represented as a signed value.</li>            
+            <li><strong>Bits 0-3</strong> Interrupt, extended operation or exception number - after executing an XOP instruction,
+              these bits will contain the XOP number from the executed instruction. (e.g. - XOP0 will cause these bits to
+              contain 0000 while XOP7 will cause these bits to contain 0111.) After a hardware interrupt, these bits will
+              contain the interrupt number. After an exception, these bits will contain the exception value.</li>
+            <li><strong>Bit 4</strong> Parity - This bit is set if an instruction results in a 16 bit value with odd parity.</li> 
+            <li><strong>Bit 5</strong> Flag 0 - This is a user defined flag which may be set, reset and tested as needed.</li>
+            <li><strong>Bits 4-5</strong> eXtended Operation Arity - after an eXtended OPeration, this bit field will be set to
+              0, 1 or 2: the number of registers used in the instruction. (e.g. - "XOP0" will cause these bits to be 00 while
+              "XOP7 R12" will cause these bits to contain 01 because the XOP instruction referenced a single register value.)</li>
+            <li><strong>Bit 6</strong> Flag 1 - This is a user defined flag which may be set, reset and tested as needed.</li>
+            <li><strong>Bit 7</strong> Flag 2 - This is a user defined flag which may be set, reset and tested as needed.</li>
+            <li><strong>Bit 8</strong> Flag 3 - This is a user defined flag which may be set, reset and tested as needed.</li>
+            <li><strong>Bit 9</strong> Interrupts Enabled - Hardware Interrupts will be ignored if this bit is reset.</li>
+            <li><strong>Bit 10</strong> eXtended Operations Enabled - XOPs will be ignored if this bit is reset.</li>
+            <li><strong>Bit 11</strong> Exceptions Enabled - Exceptions will be ignored if this bit is reset.</li>
+            <li><strong>Bits 12-15</strong> Interrupt Priority - Hardware interrupts whose priority is greater than
+              the 4 bit value stored in these bits will be ignored.</li>
+          </ul>
+        </p>
 
-<h3>
-<a name="designer-templates" class="anchor" href="#designer-templates"><span class="octicon octicon-link"></span></a>Designer Templates</h3>
+        <h3><a name="instructions" class="anchor" href="#instructions"><span class="octicon octicon-link"></span></a>Instructions</h3>
+        <p>
+          The 801 Instruction Set contains twelve (12) "Instruction Formats." Each format is identified by the top 4 bits
+          of any instruction. Each format attempts to group instructions by way of the number of function and number of
+          registers they operate on.
 
-<p>We've crafted some handsome templates for you to use. Go ahead and continue to layouts to browse through them. You can easily go back to edit your page before publishing. After publishing your page, you can revisit the page generator and switch to another theme. Your Page content will be preserved if it remained markdown format.</p>
+          <table>
+            <tr>
+              <th width="18%">Instruction Format</th>
+              <th width="30%">Bit Format</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td>Format 0-0</td>
+              <td>0000 XXXX XXXX XXXX</td>
+              <td><strong>Zero Register Instructions</strong> This format includes instructions like HLT (Halt), IDLE (Idle)
+                INTD and INTE (Interrupt Disable / Enable.) These are instructions that operate on the CPU as a whole, without
+                referencing a register, immediate value or jump offset.</td>
+            </tr>
+            <tr>
+              <td>Format 0-1</td>
+              <td>0001 NNNN PPPP PPPP</td>
+              <td><strong>Zero Register Extended Instructions</strong> This format is reserved for XOP (eXtended OPeration)
+              instructions that do not reference a register or reference a PC-relative displacement.</td>
+            </tr>
+            <tr>
+              <td>Format 0-2</td>
+              <td>0010 NNNN 0000 DDDD</td>
+              <td><strong>Single Register Extended Instructions</strong> This is the format used for XOP (eXtended OPeration)
+              instructions that refrence a single Register</td>
+            </tr>
+            <tr>
+              <td>Format 0-3</td>
+              <td>0011 NNNN SSSS DDDD</td>
+              <td><strong>Dual Register Extended Instructions</strong> This is the format used for XOP (eXtended OPeration)
+              instructions that reference two registers.</td>
+            </tr>
+            <tr>
+              <td>Format 1-0</td>
+              <td>0100 XXXX XXXX DDDD</td>
+              <td><strong>Single Register Instructions</strong> Instructions that operate on a single register. (ex.
+              (INC (incremenot), NEG (negate), INV (invert).)</td>
+            </tr>
+            <tr>
+              <td>Format 1-1</td>
+              <td>0101 XXXX CCCC DDDD</td>
+              <td><strong>Single Register Shift and Rotate Instructions</strong> Instructions that rotate or shift the
+              contents of a register a fixed number of bits.</td>
+            </tr>
+            <tr>
+              <td>Format 1-2</td>
+              <td>0101 XXXX XXXX DDDD</td>
+              <td><strong>Single Register Immediate Instructions</strong> This is the format for instructions that operate
+              with a single 16 bit "immediate" value, stored in the memory address after the instruction. Examples include
+              LOAD (load a register with the contents of the memory pointed to by the "immediate" value) and ANDI (logically
+              AND a register with the 16-bit "immediate" value.)</td>
+            </tr>
+            <tr>
+              <td>Format 1-3</td>
+              <td>0111 PPPP PPPP DDDD</td>
+              <td><strong>Loop Instructions</strong> This is the format for the LOOP and LOOPN instructions that decrement
+              the contents of a register and then jump if the result is (or is not) zero.</td>
+            </tr>
+            <tr>
+              <td>Format 2-0</td>
+              <td>10XX XXXX SSSS DDDD</td>
+              <td><strong>Dual Register Instructions</strong> This format is for instructions like ADD, MOV or MPY which
+              operate on two instructions.</td>
+            </tr>
+            <tr>
+              <td>Format 3-0</td>
+              <td>1100 XXXX PPPP PPPP</td>
+              <td><strong>Jump Instructions (relative addressing)</strong> This is the format for the conditional jump
+              instructions like JZ (Jump on Zero) and JMP (Unconditional Jump) that cause a 8 bit signed displacement
+              to be added to the PC.</td>
+            </tr>
+            <tr>
+              <td>Format 3-1</td>
+              <td>1101 XXXX XXXX XXXX</td>
+              <td><strong>Branch Instructions (Absolute Addressing)</strong> These instructions perform an unconditional
+              branch to a 16-bit absolute address whose value is in the word following the instruction.</td>
+            </tr>
+            <tr>
+              <td>Format 3-2</td>
+              <td>1110 XXXX XXXX DDDD</td>
+              <td><strong>Branch Instructions (Indirect Addressing)</strong> These instructions branch to the address
+              specified in a general purpose register.</td>
+            </tr>
+          </table>
+        </p>
 
-<h3>
-<a name="rather-drive-stick" class="anchor" href="#rather-drive-stick"><span class="octicon octicon-link"></span></a>Rather Drive Stick?</h3>
+        <p>And here's the documentation for individual instructions:
 
-<p>If you prefer to not use the automatic generator, push a branch named <code>gh-pages</code> to your repository to create a page manually. In addition to supporting regular HTML content, GitHub Pages support Jekyll, a simple, blog aware static site generator written by our own Tom Preston-Werner. Jekyll makes it easy to create site-wide headers and footers without having to copy them across every page. It also offers intelligent blog support and other advanced templating features.</p>
-
-<h3>
-<a name="authors-and-contributors" class="anchor" href="#authors-and-contributors"><span class="octicon octicon-link"></span></a>Authors and Contributors</h3>
-
-<p>You can <a href="https://github.com/blog/821" class="user-mention">@mention</a> a GitHub username to generate a link to their profile. The resulting <code>&lt;a&gt;</code> element will link to the contributor's GitHub Profile. For example: In 2007, Chris Wanstrath (<a href="https://github.com/defunkt" class="user-mention">@defunkt</a>), PJ Hyett (<a href="https://github.com/pjhyett" class="user-mention">@pjhyett</a>), and Tom Preston-Werner (<a href="https://github.com/mojombo" class="user-mention">@mojombo</a>) founded GitHub.</p>
-
-<h3>
-<a name="support-or-contact" class="anchor" href="#support-or-contact"><span class="octicon octicon-link"></span></a>Support or Contact</h3>
-
-<p>Having trouble with Pages? Check out the documentation at <a href="http://help.github.com/pages">http://help.github.com/pages</a> or contact <a href="mailto:support@github.com">support@github.com</a> and we’ll help you sort it out.</p>
+          <table>
+            <tr>
+              <th width="18%">Mnemonic</th>
+              <th width="30%">OpCode</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td colspan="3">Format 0-0 Zero Register Instructions</td>
+            </tr>
+            <tr>
+              <td>HLT</td>
+              <td>0000 0000 0000 0000</td>
+              <td><strong>Halt</strong> - This instruction causes the CPU to be placed in the "HALTED" state. The
+              CPU will respond only to the NMI / RESET signal.</td>
+            </tr>
+            <tr>
+              <td>IDLE</td>
+              <td>0000 0000 0000 0001</td>
+              <td><strong>Idle</strong> - This instruction places the CPU in the "IDLE" state. It does not process
+              op codes, but will respond to interrupts.</td>
+            </tr>
+            <tr>
+              <td>COLD</td>
+              <td>0000 0000 0000 0010</td>
+              <td><strong>Cold Reset</strong> - Resets the CPU. It's the equivalent of a cold boot: clears the CPU's
+                registers, resets I/O and reloads memory from external serial flash.</td>
+            </tr>
+            <tr>
+              <td>WARM</td>
+              <td>0000 0000 0000 0011</td>
+              <td><strong>Warm Reset</strong> - Resets the CPU, clearing the PC, WP and CR registers, but does not
+                reset I/O and does not reload memory. Equivalent of executing BLWP 0xFFFE.</td>
+            </tr>
+            <tr>
+              <td>SET n</td>
+              <td>0000 0000 0001 NNNN</td>
+              <td><strong>Set CR Bit</strong> Sets Condition Code Register bit n to one.</td>
+            </tr>
+            <tr>
+              <td>RESET n</td>
+              <td>0000 0000 0010 NNNN</td>
+              <td><strong>Reset Carry</strong> Resets Condition Code Register bit n to zero.</td>
+            </tr>
+            <tr>
+              <td>HCF</td>
+              <td>0000 1111 1111 1111</td>
+              <td><strong>Halt and Catch Fire</strong> Included for compatibility with older DEC and IBM systems. May not
+                be implemented on all CPUs.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 0-1 Zero Register Extended Instructions</td>
+            </tr>
+            <tr>
+              <td>XOPn d</td>
+              <td>0001 NNNN PPPP PPPP</td>
+              <td><strong>eXtended OPeration (Zero Register)</strong> This instruction causes the
+              CPU call interrupt vector 1, placing the extended opcode number (n) in the lower four
+              bits of the condition code register. The lower 8 bits represent an optional signed
+              displacement. The value of the current PC plus this displacement are stored in
+              Register 11 of the ISR's workspace.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 0-2 Single Register Extended Instructions</td>
+            </tr>
+            <tr>
+              <td>XOPn Rd</td>
+              <td>0010 NNNN 0000 DDDD</td>
+              <td><strong>eXtended OPeration (Single Register)</strong> As above, with the Zero Register XOP
+                instruction but it also places the value of register d from the caller's
+                register workspace into register 11 in the ISR's workspace.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 0-3 Dual Register Extended Instructions</td>
+            </tr>
+            <tr>
+              <td>XOPn Rd, Rs</td>
+              <td>0011 NNNN SSSS DDDD</td>
+              <td><strong>eXtended OPeration (Dual Register)</strong> As above, with the Single Register XOP
+                instruction but it also places the value of register s from the caller's
+                register workspace into register 10 in the ISR's workspace.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 1-0 Single Register Instructions</td>
+            </tr>
+            <tr>
+              <td>CLR Rd</td>
+              <td>0100 0000 0000 DDDD</td>
+              <td><strong>Clear Register</strong> Sets all bits in register d to zero. Does not effect the Condition
+              Code Register.</td>
+            </tr>
+            <tr>
+              <td>SETO Rd</td>
+              <td>0100 0000 0001 DDDD</td>
+              <td><strong>Set Bits to One</strong> Sets all bits in register d to one. Does not effect the Condition
+              Code Register.</td>
+            </tr>
+            <tr>
+              <td>INV Rd</td>
+              <td>0100 0000 0010 DDDD</td>
+              <td><strong>Invert</strong> Inverts the bits in register d and sets the Condition Code appropriately.
+              Equivalent of calling XORI Rd, 0xFFFF</td>
+            </tr>
+            <tr>
+              <td>NEG Rd</td>
+              <td>0100 0000 0011 DDDD</td>
+              <td><strong>Negate</strong> Treats the contents of register d as a signed 16-bit value, inverts its value
+              and sets the condition code register appropriately. It is the logical equivalent of multiplying the contents
+              of the register by -1 (though this is not how it is implemented in silicon.)</td>
+            </tr>
+            <tr>
+              <td>ABS Rd</td>
+              <td>0100 0000 0100 DDDD</td>
+              <td><strong>Absolute Value</strong> Treats the contents of register d as a signed 16-bit value, inverts its value
+              if it is negative and sets the condition code register appropriately.</td>
+            </tr>
+            <tr>
+              <td>INC Rd</td>
+              <td>0100 0000 0101 DDDD</td>
+              <td><strong>Increment</strong> Treats the contents of register d as an unsigned 16-bit value, increments it by
+              one and sets the condition code register appropriately.</td>
+            </tr>
+            <tr>
+              <td>DEC Rd</td>
+              <td>0100 0000 0110 DDDD</td>
+              <td><strong>Decrement</strong> Treats the contents of register d as an unsigned 16-bit value, decrements it by
+              one and sets the condition code register appropriately.</td>
+            </tr>
+            <tr>
+              <td>LDCR Rd</td>
+              <td>0100 0000 0111 DDDD</td>
+              <td><strong>Load Condition Code Register</strong> Copies the contents of the Condition Code Register into the
+                general purpose register indicated.</td>
+            </tr>
+            <tr>
+              <td>STCR Rd</td>
+              <td>0100 0000 1000 DDDD</td>
+              <td><strong>Store Condition Code Register</strong> Stores bits 4 through 11 of the Condition Code Register with
+                the contents of the general purpose register provided.</td>
+            </tr>
+            <tr>
+              <td>LDWP Rd</td>
+              <td>0100 0000 1001 DDDD</td>
+              <td><strong>Load Workspace Pointer Register</strong> Copies the contents of the Workspace Pointer register into
+                the indicated general purpose register.</td>
+            </tr>
+            <tr>
+              <td>STWP Rd</td>
+              <td>0100 0000 1010 DDDD</td>
+              <td><strong>Store Workspace Pointer Register</strong> Copies the contents of the indicated general purpose register
+                into the Workspace Pointer register.</td>
+            </tr>
+            <tr>
+              <td>SWPB Rd</td>
+              <td>0100 0000 1011 DDDD</td>
+              <td><strong>Swap Bytes</strong> Swaps the bytes in the register indicated.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 1-1 Single Register Shift and Rotate Instructions</td>
+            </tr>
+            <tr>
+              <td>SL Rd, c</td>
+              <td>0101 0000 CCCC DDDD</td>
+              <td><strong>Shift Left</strong> Shifts the contents of the indicated register C bits to the left.
+              Fills the bits to the right with zeros. Bits exiting the register on the left enter the carry bit
+              in the condition code register.</td>
+            </tr>
+            <tr>
+              <td>SR Rd, c</td>
+              <td>0101 0001 CCCC DDDD</td>
+              <td><strong>Shift Right</strong> Shifts the contents of the indicated register C bits to the right.
+              Fills the bits to the left with zeros. Bits exiting the register on the right enter the carry bit
+              in the condition code register.</td>
+            </tr>
+            <tr>
+              <td>SLO Rd, c</td>
+              <td>0101 0010 CCCC DDDD</td>
+              <td><strong>Shift Left, fill with Ones</strong> Shifts the contents of the indicated register C bits to the left.
+              Fills the bits to the right with ones. Bits exiting the register on the left enter the carry bit
+              in the condition code register.</td>
+            </tr>
+            <tr>
+              <td>SRO Rd, c</td>
+              <td>0101 0011 CCCC DDDD</td>
+              <td><strong>Shift Right, fill with Ones</strong> Shifts the contents of the indicated register C bits to the right.
+              Fills the bits to the left with ones. Bits exiting the register on the right enter the carry bit
+              in the condition code register.</td>
+            </tr>
+            <tr>
+              <td>SLC Rd, c</td>
+              <td>0101 0100 CCCC DDDD</td>
+              <td><strong>Shift Left, fill with Carry</strong> Shifts the contents of the indicated register C bits to the left.
+              Fills the bits to the right with the contents of the carry bit in the condition code register.</td>
+            </tr>
+            <tr>
+              <td>SRC Rd, c</td>
+              <td>0101 0101 CCCC DDDD</td>
+              <td><strong>Shift Right, fill with Carry</strong> Shifts the contents of the indicated register C bits to the right.
+              Fills the bits to the left with with the contents of the carry bit in the condition code register.</td>
+            </tr>
+            <tr>
+              <td>SRSE Rd, c</td>
+              <td>0101 0110 CCCC DDDD</td>
+              <td><strong>Shift Right, Sign Extend</strong> Shifts the contents of the indicated register C bits to the right.
+                Fills the bits to the left with with the contents of the most significant (left-most) bit. Bits exiting the
+                register on the right enter the carry bit in the condition code register.</td>
+            </tr>
+            <tr>
+              <td>ROTL Rd, c</td>
+              <td>0101 0111 CCCC DDDD</td>
+              <td><strong>Rotate Left</strong> Rotates the contents of the indicated register C bits to the left.
+              Bits exiting the register on the left are shifted into the register on the right and into the carry bit
+              in the condition code register.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 1-2 Single Register Instructions with Immediate Values</td>
+            </tr>
+            <tr>
+              <td>LI Rd, n</td>
+              <td>0110 0000 0000 DDDD</td>
+              <td><strong>Load Immediate</strong> Loads the indicated register with the contents of the immediate value
+                in the word immdiately following the instruction.</td>
+            </tr>
+            <tr>
+              <td>ADDI Rd, n</td>
+              <td>0110 0000 0001 DDDD</td>
+              <td><strong>Add Immediate</strong> Adds the contents of the word immediately following the instruction to the
+                contents of the indicated register then updates the condition code register.</td>
+            </tr>
+            <tr>
+              <td>SUBI Rd, n</td>
+              <td>0110 0000 0010 DDDD</td>
+              <td><strong>Subtract Immediate</strong> Subtracts the contents of the word immediately following the instruction
+                to the contents of the indicated register then updates the condition code register. Equivalent to adding the
+                two's complement of the immediate value.</td>
+            </tr>
+            <tr>
+              <td>CMPI Rd, n</td>
+              <td>0110 0000 0011 DDDD</td>
+              <td><strong></strong> Compares the indicated register with the contents of the immediate value
+                in the word immdiately following the instruction, then updates the condition code register. Equivalent
+                to subtracting the immediate value from the register and discarding the result.</td>
+            </tr>
+            <tr>
+              <td>MPYI Rd, n</td>
+              <td>0110 0000 0100 DDDD</td>
+              <td><strong>Multiply Immediate</strong> Multiplies the contents of the word immediately following the instruction
+                to the contents of the indicated register (and the register following it) then updates the condition code
+                register.</td>
+            </tr>
+            <tr>
+              <td>DIVI Rd, n</td>
+              <td>0110 0000 0101 DDDD</td>
+              <td><strong>Divide Immediate</strong> Divides the indicated register and the register following it by the contents of
+                the the word immdiately following the instruction, then updates the condition code register.</td>
+            </tr>
+            <tr>
+              <td>MPYSI Rd, n</td>
+              <td>0110 0000 0110 DDDD</td>
+              <td><strong>Signed Multiply Immediate</strong> Multiplies the contents of the word immediately following the
+                instruction to the contents of the indicated register (and the register following it), treating them both as
+                signed integers, then updates the condition code register.</td>
+            </tr>
+            <tr>
+              <td>DIVSI Rd, n</td>
+              <td>0110 0000 0111 DDDD</td>
+              <td><strong>Signed Divide Immediate</strong> Divides the indicated register (and the register immediately following
+                it) by the contents of the word immdiately following the instruction, treating them both as signed integers,
+                then updates the condition code register.</td>
+            </tr>
+            <tr>
+              <td>ANDI Rd, n</td>
+              <td>0110 0000 1000 DDDD</td>
+              <td><strong>And Immediate</strong> Logically ANDs the contents of the word immediately following the instruction
+                to the contents of the indicated register then updates the condition code register.</td>
+            </tr>
+            <tr>
+              <td>ORI Rd, n</td>
+              <td>0110 0000 1001 DDDD</td>
+              <td><strong>Or Immediate</strong> Logically ORs the contents of the word immediately following the instruction
+                to the contents of the indicated register then updates the condition code register.</td>
+            </tr>
+            <tr>
+              <td>XORI Rd, n</td>
+              <td>0110 0000 1010 DDDD</td>
+              <td><strong>XOR Immediate</strong> Logically XORs the contents of the word immediately following the instruction
+                to the contents of the indicated register then updates the condition code register.</td>
+            </tr>
+            <tr>
+              <td>PUSHI Rd</td>
+              <td>0110 0000 1011 DDDD</td>
+              <td><strong>Push Immediate</strong> Treats the indicated register as a stack pointer and pushes the word
+                immediately following the instruction onto the stack.</td>
+            </tr>
+            <tr>
+              <td>PUSHMI Rd</td>
+              <td>0110 0000 1100 DDDD</td>
+              <td><strong>Push Multiple Immediate</strong> Treats the indicated register as a stack pointer and the word
+                immediately following the instruction as a bit mask indicating the registers to be pushed on the stack.</td>
+            </tr>
+            <tr>
+              <td>POPMI Rd</td>
+              <td>0110 0000 1101 DDDD</td>
+              <td><strong>Pop Multiple Immediate</strong> Treats the indicated register as a stack pointer and the word
+                immediately following the instruction as a bit mask indicating the registers to be popped from the stack.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 1-3 Loop Instruction</td>
+            </tr>
+            <tr>
+              <td>LOOP Rd</td>
+              <td>0111 PPPP PPPP DDDD</td>
+              <td><strong>Loop</strong> Decrements the register indicated, setting the condition code as appropriate. If the
+                value of the register after decrementing is zero, it jumps to offset p.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 2-0 Dual Register Instructions</td>
+            </tr>
+            <tr>
+              <td>MOV Rd, Rs</td>
+              <td>1000 0000 SSSS DDDD</td>
+              <td><strong>Move</strong> Copies the contents of register s into register d</td>
+            </tr>
+            <tr>
+              <td>ADD Rd, Rs</td>
+              <td>1000 0001 SSSS DDDD</td>
+              <td><strong>Add</strong> Adds the contents of register s into register d, updating the condition code register
+                as appropriate.</td>
+            </tr>
+            <tr>
+              <td>SUB Rd, Rs</td>
+              <td>1000 0010 SSSS DDDD</td>
+              <td><strong>Subtract</strong> Subtracts the contents of register s from register d, updating the condition code
+                register as appropriate.</td>
+            </tr>
+            <tr>
+              <td>CMP Rd, Rs</td>
+              <td>1000 0011 SSSS DDDD</td>
+              <td><strong>Compare</strong> Compares the contents of register s and register d, updating the condition code
+              register as appropriate. Equivalent to subtracting register s from register d and discarding the result.</td>
+            </tr>
+            <tr>
+              <td>MPY Rd, Rs</td>
+              <td>1000 0100 SSSS DDDD</td>
+              <td><strong>Multiply</strong> Multiplies the contents of register s into register d and register d + 1, updating
+                the condition code register as appropriate.</td>
+            </tr>
+            <tr>
+              <td>DIV Rd, Rs</td>
+              <td>1000 0101 SSSS DDDD</td>
+              <td><strong>Divide</strong> Divides the contents of registers s and s + 1 by the contents of register d, storing
+                the result in register d, then updates the condition code register as appropriate.</td>
+            </tr>
+            <tr>
+              <td>MPYS Rd, Rs</td>
+              <td>1000 0110 SSSS DDDD</td>
+              <td><strong>Signed Multiply</strong> Multiplies the contents of register s into register d and register d + 1,
+                treating both as signed integer, then updates the condition code register as appropriate.</td>
+            </tr>
+            <tr>
+              <td>DIVS Rd, Rs</td>
+              <td>1000 0111 SSSS DDDD</td>
+              <td><strong>Signed Divide</strong> Divides the contents of registers s and s + 1 by the contents of register d,
+                storing the result in register d, treating both as signed integers, then updates the condition code register as
+                appropriate.</td>
+            </tr>
+            <tr>
+              <td>AND Rd, Rs</td>
+              <td>1000 1000 SSSS DDDD</td>
+              <td><strong>And</strong> Logically ANDs the contents of registers d and s, storing the result in d, updating
+                the condition code register as appropriate.</td>
+            </tr>
+            <tr>
+              <td>OR Rd, Rs</td>
+              <td>1000 1001 SSSS DDDD</td>
+              <td><strong>Or</strong> Logicaly ORs the contents of registers d and s, storing the result in d, updating
+                the condition code register as appropriate.</td>
+            </tr>
+            <tr>
+              <td>XOR Rd, Rs</td>
+              <td>1000 1010 SSSS DDDD</td>
+              <td><strong>XOR</strong> Logicaly XORs the contents of registers d and s, storing the result in d, updating
+                the condition code register as appropriate.</td>
+            </tr>
+            <tr>
+              <td>PUSH Rd, Rs</td>
+              <td>1000 1011 SSSS DDDD</td>
+              <td><strong>Push</strong> Treats register d as a stack pointer, pushes the contents of register s onto the
+                stack.</td>
+            </tr>
+            <tr>
+              <td>POP Rd, Rs</td>
+              <td>1000 1100 SSSS DDDD</td>
+              <td><strong>Pop</strong> Treats register d as a stack pointer, pops the top of the stack into register s.</td>
+            </tr>
+            <tr>
+              <td>SLR Rd, Rs</td>
+              <td>1000 1101 SSSS DDDD</td>
+              <td><strong>Shift Left via Register</strong> Shifts the contents register d to the left by the number of bits
+              specified by the lower 16 bits of register s.</td>
+            </tr>
+            <tr>
+              <td>SRR Rd, Rs</td>
+              <td>1000 1110 SSSS DDDD</td>
+              <td><strong>Shift Right via Register</strong> Shifts the contents register d to the right by the number of bits
+              specified by the lower 16 bits of register s.</td>
+            </tr>
+            <tr>
+              <td>ROTL Rd, Rs</td>
+              <td>1000 1111 SSSS DDDD</td>
+              <td><strong>Rotate</strong> Rotates the contents register d to the left by the number of bits
+              specified by the lower 16 bits of register s.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 3-0 Jump Instructions (PC relative addressing)</td>
+            </tr>
+            <tr>
+              <td>JZ d</td>
+              <td>1100 0000 PPPP PPPP</td>
+              <td><strong>Jump on Zero</strong> If the Zero bit is set in the condition code register, treat the offset p
+                as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JNZ d</td>
+              <td>1100 0001 PPPP PPPP</td>
+              <td><strong>Jump on Not Zero</strong> If the Zero bit is reset in the condition code register, treat the offset p
+                as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JC d</td>
+              <td>1100 0010 PPPP PPPP</td>
+              <td><strong>Jump on Carry</strong> If the Carry bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JNC d</td>
+              <td>1100 0011 PPPP PPPP</td>
+              <td><strong>Jump on No Carry</strong> If the Carry bit is reset in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JS d</td>
+              <td>1100 0100 PPPP PPPP</td>
+              <td><strong>Jump on Sign</strong> If the Sign bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JNS d</td>
+              <td>1100 0101 PPPP PPPP</td>
+              <td><strong>Jump on No Sign</strong> If the Sign bit is reset in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JO d</td>
+              <td>1100 0110 PPPP PPPP</td>
+              <td><strong>Jump on Overflow</strong> If the Overflow bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JNO d</td>
+              <td>1100 0111 PPPP PPPP</td>
+              <td><strong>Jump on No Overflow</strong> If the Overflow bit is reset in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JOP d</td>
+              <td>1100 1000 PPPP PPPP</td>
+              <td><strong>Jump on Odd Parity</strong> If the OP bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JNOP d</td>
+              <td>1100 1001 PPPP PPPP</td>
+              <td><strong>Jump on No Odd Parity</strong> If the OP bit is reset in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JF0 d</td>
+              <td>1100 1010 PPPP PPPP</td>
+              <td><strong>Jump on Flag 0</strong> If the FLAG0 bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JF1 d</td>
+              <td>1100 1011 PPPP PPPP</td>
+              <td><strong>Jump on Flag 1</strong> If the FLAG0 bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JF2 d</td>
+              <td>1100 1100 PPPP PPPP</td>
+              <td><strong>Jump on Flag 2</strong> If the FLAG0 bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JF3 d</td>
+              <td>1100 1101 PPPP PPPP</td>
+              <td><strong>Jump on Flag 3</strong> If the FLAG0 bit is set in the condition code register,
+                treat the offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td>JMP d</td>
+              <td>1100 1111 PPPP PPPP</td>
+              <td><strong>Unconditional Jump</strong> Treat offset p as a signed displacement and add it to the PC register.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 3-1 Branch Instructions (Absolute Addresing)</td>
+            </tr>
+            <tr>
+              <td>B a</td>
+              <td>1101 0000 0000 XXXX</td>
+              <td><strong>Branch</strong> Move the word immediately following the current instruction into the PC register.</td>
+            </tr>
+            <tr>
+              <td>BL Rd, a</td>
+              <td>1101 0000 0001 DDDD</td>
+              <td><strong>Branch and Link</strong> Treat Register d as a stack pointer. Push the PC and CR registers onto the
+                stack. Then move the word immediately following the current instruction into the PC register.</td>
+            </tr>
+            <tr>
+              <td>BLWP Rd, a</td>
+              <td>1101 0000 0010 DDDD</td>
+              <td><strong>Branch and Link Workspace Pointer</strong> Treat the contents of the word immediately following this
+                instruction as the address of a ISR vector. Load the WP and PC registers from this vector. Place the old CR, WP
+                and PC into registers d, d+1 and d+2.</td>
+            </tr>
+            <tr>
+              <td colspan="3">Format 3-2 Branch Instructions (Indirect Addressing)</td>
+            </tr>
+            <tr>
+              <td>BR Rs</td>
+              <td>1110 0000 SSSS XXXX</td>
+              <td><strong>Branch through Register</strong> Move the contents of register s into the PC.</td>
+            </tr>
+            <tr>
+              <td>BLR Rd, Rs</td>
+              <td>1110 0001 SSSS DDDD</td>
+              <td><strong>Branch and Link through Register</strong> Treat Register d as a stack pointer. Push the PC and CR
+                registers onto the stack. Then move the contents of register s into the PC register.</td>
+            </tr>
+            <tr>
+              <td>BLWPR Rd, Rs</td>
+              <td>1110 0010 SSSS DDDD</td>
+              <td><strong>Branch and Link Workspace Pointer through Register</strong> Treat the contents of register s as
+                the address of a ISR vector. Load the WP and PC registers from this vector. Place the old CR, WP
+                and PC into registers d, d+1 and d+2.</td>
+            </tr>
+            <tr>
+              <td>RTL Rd</td>
+              <td>1101 0011 XXXX DDDD</td>
+              <td><strong>Return from Link</strong> Treat Register d as a stack pointer. Pop the PC and CR registers from
+                the top of the stack.</td>
+            </tr>
+            <tr>
+              <td>RTWP Rd</td>
+              <td>1101 0100 XXXX DDDD</td>
+              <td><strong>Return and link Workspace Pointer</strong> Move Register d into the CR register, Register d+1 into
+                the WP register and Register d+2 into the PC register.</td>
+            </tr>
+          </table>
       </section>
     </div>
 
@@ -72,8 +789,5 @@ $ git checkout gh-pages
         <p>Published with <a href="http://pages.github.com">GitHub Pages</a></p>
       </footer>
     </div>
-
-    
-
   </body>
 </html>
